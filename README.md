@@ -1,4 +1,3 @@
-```markdown
 # ⚡ AI YouTube & Instagram Video Creator — videoCreator.pyw
 
 A focused desktop GUI application (single-file: `videoCreator.pyw`) that automates short-form video production: topic & script generation, voiceover (TTS), visual prompt & image generation, subtitle transcription/alignment, video assembly (MoviePy + FFmpeg), and optional YouTube upload.
