@@ -3,10 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 
-# C extensions
-*.so
-
-# Distribution / packaging
+# Virtual environments
 .Python
 env/
 venv/
@@ -18,7 +15,7 @@ venv.bak/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# Distribution / packaging
 htmlcov/
 .tox/
 .nox/
@@ -44,5 +41,45 @@ pytestdebug.log
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# VS Code settings
+# IDEs and editors
 .vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config, secrets and tokens
+.env
+client_secret.json
+token.pickle
+*.pickle
+config.json
+config*.json
+
+# App runtime outputs & temp
+OUTPUT_DIR/
+VOICEOVER_DIR/
+TEMP_DIR/
+generated_images/
+generated_images_*/
+*.mp4
+*.mp3
+*.wav
+*.log
+
+# Wheels
+*.whl
+
+# Build artifacts
+build/
+dist/
+
+# Python egg
+*.egg-info/
+.eggs/
+
+# Ignore assets only if you have local changes you don't want to commit
+# (Assets that are necessary for the app are tracked: assets/*)
