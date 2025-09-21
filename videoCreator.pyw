@@ -23,6 +23,13 @@ import re
 import uuid
 import difflib
 
+# --- Import Pygame for sound ---
+try:
+    import pygame
+except ImportError:
+    # This will be handled by a check in the main application
+    pass
+
 # --- IMPORTS for YouTube API ---
 try:
     from googleapiclient.discovery import build
@@ -37,9 +44,11 @@ except ImportError:
 # --- 1. Constants and Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.json')
+ASSETS_DIR = os.path.join(SCRIPT_DIR, 'assets')
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'videos')
 VOICEOVER_DIR = os.path.join(SCRIPT_DIR, 'voiceovers')
 TEMP_DIR = os.path.join(SCRIPT_DIR, 'temp')
+
 
 # --- YouTube API Constants ---
 CLIENT_SECRET_FILE = os.path.join(SCRIPT_DIR, 'client_secret.json')
@@ -80,6 +89,20 @@ VOICE_PRESETS = {
     "nPczCjzI2devNBz1zQrb": {"stability": 0.50, "similarity_boost": 0.75, "style": 0.0, "use_speaker_boost": True},
     "default": {"stability": 0.45, "similarity_boost": 0.75, "style": 0.30, "use_speaker_boost": True}
 }
+
+# --- Sound Player Utility ---
+def play_sound(sound_file_name):
+    """Plays a sound file from the assets directory."""
+    if 'pygame' not in sys.modules:
+        return # Pygame not available
+    try:
+        sound_path = os.path.join(ASSETS_DIR, sound_file_name)
+        if os.path.exists(sound_path):
+            pygame.mixer.music.load(sound_path)
+            pygame.mixer.music.play()
+    except Exception as e:
+        print(f"Could not play sound {sound_file_name}: {e}")
+
 
 # --- YouTube Uploader Functions ---
 def youtube_authenticate(log_queue):
@@ -170,7 +193,7 @@ def load_config():
 
 def sanitize_filename(name):
     return re.sub(r'[<>:"/\\|?*]', '', name)
-
+    
 # --- API and AI Content Generation Functions ---
 def call_gemini_text_api(api_keys, system_prompt, user_prompt, log_queue):
     log_queue.put(('log', "⚙️ Calling Gemini Text API..."))
@@ -258,9 +281,8 @@ def generate_script(gemini_keys, topic, language, log_queue, add_emojis=True):
 
     log_queue.put(('log', "✅ Script generated successfully."))
     
-    # MODIFICATION: Removed the Hinglish transliteration. Subtitles will use the original script.
     return audio_script, audio_script, remaining_keys
-
+    
 def generate_youtube_metadata(gemini_keys, script, log_queue):
     log_queue.put(('log', "\n✍️ Generating YouTube metadata..."))
     system_prompt = (
@@ -270,7 +292,7 @@ def generate_youtube_metadata(gemini_keys, script, log_queue):
         "The tags should be a comma-separated list of 10-15 relevant keywords. "
         "Format the output as a JSON object with three keys: 'title', 'description', and 'tags'."
     )
-    user_prompt = f"Here is the video script:\n\n\"{script}\"\n\nGenerate the YouTube metadata in JSON format."
+    user_prompt = f"Here is the video script:\n\n\\\"{script}\\\"\n\nGenerate the YouTube metadata in JSON format."
     
     metadata_json, remaining_keys = call_gemini_text_api(gemini_keys, system_prompt, user_prompt, log_queue)
     
@@ -352,7 +374,7 @@ def generate_voiceover(script, api_keys, voice_id, topic, log_queue):
         for path in audio_chunk_paths:
             if os.path.exists(path): os.remove(path)
         return None, session_keys
-
+        
 def generate_subtitles(audio_path, log_queue):
     log_queue.put(('log', "\n📝 Transcribing audio for subtitles..."))
     try:
@@ -364,8 +386,8 @@ def align_script_with_subtitles(script_text, whisper_words, log_queue):
     log_queue.put(('log', "  -> ⚙️ Aligning script to transcription for perfect subtitles..."))
     try:
         script_words = re.findall(r"[\w\u0900-\u097F'-]+", script_text.lower())
-        transcribed_words = [re.sub(r"[.,?!\"]", "", w['word'].lower()) for w in whisper_words]
-        original_script_word_list = re.findall(r"[\w\u0900-\u097F'-]+|[.,?!\"]+", script_text)
+        transcribed_words = [re.sub(r"[.,?!\\\"]", "", w['word'].lower()) for w in whisper_words]
+        original_script_word_list = re.findall(r"[\w\u0900-\u097F'-]+|[.,?!\\\"]+", script_text)
 
         matcher = difflib.SequenceMatcher(None, script_words, transcribed_words, autojunk=False); corrected_words = []
         
@@ -385,12 +407,11 @@ def align_script_with_subtitles(script_text, whisper_words, log_queue):
         if not corrected_words: corrected_words = whisper_words
         log_queue.put(('log', "✅ Subtitle alignment complete.")); return corrected_words
     except Exception as e: log_queue.put(('log', f"  -> ⚠️ WARNING: Subtitle alignment failed: {e}. Using original transcription.")); return whisper_words
-
+        
 def generate_visual_prompts(gemini_keys, script, log_queue, check_events_func, verbose=False):
     log_queue.put(('log', "\n🎨 Generating visual prompts with enhanced 'Film Director' strategy..."))
     remaining_keys = list(gemini_keys)
 
-    # MODIFICATION: Upgraded system prompt for a more creative and consistent visual style.
     log_queue.put(('log', "  -> 🎬 Defining a consistent visual style and character..."))
     anchor_system_prompt = (
         "You are a concept artist. Based on the script, describe a central, visually interesting character OR subject and a consistent background style/setting. "
@@ -399,7 +420,7 @@ def generate_visual_prompts(gemini_keys, script, log_queue, check_events_func, v
         "Example for a script about ancient coins: 'A wise old historian with glasses, examining a rare coin in a dimly lit, dusty library. The style is warm, focused lighting, with a shallow depth of field.'"
         "\n\n**Output ONLY the descriptive phrase.**"
     )
-    anchor_user_prompt = f"Here is the script: \"{script}\"\n\nGenerate the anchor description."
+    anchor_user_prompt = f"Here is the script: \\\"{script}\\\"\n\nGenerate the anchor description."
     
     anchor_prompt, remaining_keys = call_gemini_text_api(remaining_keys, anchor_system_prompt, anchor_user_prompt, log_queue)
 
@@ -422,7 +443,6 @@ def generate_visual_prompts(gemini_keys, script, log_queue, check_events_func, v
         check_events_func()
         log_queue.put(('log', f"  -> ⚙️ Generating dynamic shot for scene {i+1}/{len(scene_scripts)}..."))
         
-        # MODIFICATION: Upgraded system prompt to ask for varied camera angles and actions.
         action_system_prompt = (
             "You are a film director describing a specific shot. Based on the script line, describe the scene, including the character's action/expression AND a camera angle. Be creative with the angles. "
             "**CRITICAL: VARY THE SHOTS! Use different camera angles like:**\n"
@@ -435,7 +455,7 @@ def generate_visual_prompts(gemini_keys, script, log_queue, check_events_func, v
             "Example Output: 'A dramatic low-angle shot of the historian gasping in surprise, holding the coin up to the light.'"
             "\n\n**Output ONLY the short scene description.**"
         )
-        action_user_prompt = f"Here is the script line: \"{scene_text}\"\n\nDescribe the shot."
+        action_user_prompt = f"Here is the script line: \\\"{scene_text}\\\"\n\nDescribe the shot."
         
         scene_description, remaining_keys = call_gemini_text_api(remaining_keys, action_system_prompt, action_user_prompt, log_queue)
         
@@ -462,8 +482,7 @@ def generate_visual_prompts(gemini_keys, script, log_queue, check_events_func, v
 
     log_queue.put(('log', "✅ All scene prompts generated successfully."))
     return visual_prompts, remaining_keys
-
-
+    
 def generate_images_cloudflare(prompts_data, accounts, log_queue, image_model_id, check_events_func):
     log_queue.put(('log', "\n📸 Generating images with Cloudflare AI..."))
     if not accounts: log_queue.put(('log', "  -> ❌ ERROR: No Cloudflare accounts provided.")); return []
@@ -601,9 +620,82 @@ def merge_videos(intro_path, main_path, output_path, options, log_queue, check_e
     except Exception as e:
         if not isinstance(e, CancellationError): log_queue.put(('log', f"  -> ❌ Error during final merge: {e}"))
         return None
+# --- SplashScreen ---
+class SplashScreen(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.lift()
+        self.attributes("-topmost", True)
 
-# --- GUI Classes (No changes in this part, but included for completeness) ---
+        # Play intro sound
+        play_sound('intro.mp3')
 
+        screen_width = parent.winfo_screenwidth()
+        screen_height = parent.winfo_screenheight()
+        self.width, self.height = 600, 300
+        x = (screen_width / 2) - (self.width / 2)
+        y = (screen_height / 2) - (self.height / 2)
+        self.geometry(f'{self.width}x{self.height}+{int(x)}+{int(y)}')
+
+        self.canvas = tk.Canvas(self, bg='black', highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+        
+        try:
+            car_path = os.path.join(ASSETS_DIR, 'intro_car.png')
+            if os.path.exists(car_path):
+                img = PILImage.open(car_path)
+                img.thumbnail((self.width / 2, self.height / 2), PILImage.Resampling.LANCZOS)
+                self.car_image = ImageTk.PhotoImage(img)
+                self.car_item = self.canvas.create_image(-img.width, self.height / 1.5, anchor='w', image=self.car_image)
+            else: self.car_item = None
+        except Exception as e:
+            print(f"Error loading splash image: {e}"); self.car_item = None
+
+        self.title_text = "Flash Craft ⚡️"
+        self.text_items = {} 
+        self.revealed_letters = [False] * len(self.title_text)
+        self.text_colors = RAINBOW_PALETTE
+        
+        self.start_time = time.time()
+        self.animate()
+
+    def animate(self):
+        elapsed_time = time.time() - self.start_time
+        duration = 3.0
+        progress = min(elapsed_time / duration, 1.0)
+        
+        car_start_x = -self.car_image.width()
+        car_end_x = self.width
+        car_x = car_start_x + (car_end_x - car_start_x) * progress
+        if self.car_item: self.canvas.coords(self.car_item, car_x, self.height / 1.5)
+        
+        title_width = self.width * 0.8
+        start_x_pos = (self.width - title_width) / 2
+        
+        for i, char in enumerate(self.title_text):
+            letter_pos_x = start_x_pos + (title_width / len(self.title_text)) * (i + 0.5)
+            if car_x > letter_pos_x and not self.revealed_letters[i]:
+                font_size = int(self.height / 5)
+                color = self.text_colors[i % len(self.text_colors)]
+                font_family = 'Segoe UI Emoji' if char == '⚡️' else 'Impact'
+                
+                text_id = self.canvas.create_text(letter_pos_x, self.height / 2.5, text=char,
+                                                  font=(font_family, font_size, 'bold'),
+                                                  fill=color)
+                self.text_items[i] = text_id
+                self.revealed_letters[i] = True
+
+        if progress < 1.0:
+            self.after(15, self.animate)
+        else:
+            self.after(1000, self.close_splash)
+            
+    def close_splash(self):
+        self.master.deiconify()
+        self.destroy()
+
+# --- GUI Classes ---
 class ProgressStepper(ttk.Frame):
     def __init__(self, parent, stages, colors):
         super().__init__(parent); self.stages, self.colors = stages, colors; self.canvas = tk.Canvas(self, bg=colors['bg'], highlightthickness=0, height=90); self.canvas.pack(fill='x', expand=True); self.items = {}; self.current_stage_index = -1; self.canvas.bind("<Configure>", self._draw)
@@ -670,7 +762,7 @@ class SettingsWindow(tk.Toplevel):
         ttk.Button(eleven_btn_frame, text="➕ Add Key", command=self.add_elevenlabs_key).pack(side='left', padx=(0,5))
         self.remove_elevenlabs_button = ttk.Button(eleven_btn_frame, text="➖ Remove Selected", command=self.remove_elevenlabs_key, state='disabled'); self.remove_elevenlabs_button.pack(side='left')
         self.elevenlabs_text.bind("<KeyRelease>", lambda e: self.on_text_select(self.elevenlabs_text, self.remove_elevenlabs_button)); self.elevenlabs_text.bind("<ButtonRelease>", lambda e: self.on_text_select(self.elevenlabs_text, self.remove_elevenlabs_button))
-
+        
         cf_frame = ttk.LabelFrame(main_frame, text="Cloudflare Accounts", padding=10); cf_frame.grid(row=2, column=0, sticky='nsew'); main_frame.rowconfigure(2, weight=1); cf_frame.columnconfigure(0, weight=1); cf_frame.rowconfigure(0, weight=1)
         self.cloudflare_tree = ttk.Treeview(cf_frame, columns=("account_id", "api_token"), show="headings"); self.cloudflare_tree.heading("account_id", text="Account ID"); self.cloudflare_tree.heading("api_token", text="API Token"); self.cloudflare_tree.column("account_id", width=250); self.cloudflare_tree.column("api_token", width=250); self.cloudflare_tree.grid(row=0, column=0, sticky='nsew')
         for account in config.get('CLOUDFLARE_ACCOUNTS', []):
@@ -756,7 +848,7 @@ class YouTubeUploadDialog(simpledialog.Dialog):
             "description": self.desc_text.get("1.0", tk.END).strip(),
             "tags": self.tags_entry.get()
         }
-
+        
 class VideoCreatorApp:
     def __init__(self, root):
         self.root = root; self.root.title("AI Video Creator"); self.root.geometry("1100x900"); self.config = load_config()
@@ -766,6 +858,13 @@ class VideoCreatorApp:
         self.last_video_path = None
         self.youtube_service = None
         
+        if 'pygame' in sys.modules:
+            try:
+                pygame.init()
+                pygame.mixer.init()
+            except Exception as e:
+                messagebox.showwarning("Audio Warning", f"Could not initialize audio player (Pygame): {e}\nAudio feedback will be disabled.")
+                
         try:
             from googleapiclient.discovery import build
         except ImportError:
@@ -781,6 +880,9 @@ class VideoCreatorApp:
         self._create_widgets()
         self._load_settings()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        self.root.withdraw()
+        SplashScreen(self.root)
     
     def on_closing(self): self._save_settings(); self.root.destroy()
     def _setup_styles(self):
@@ -818,7 +920,7 @@ class VideoCreatorApp:
         ttk.Label(core_frame, text="Image Model:").grid(row=0, column=2, padx=(10,5), pady=5, sticky="w"); self.image_model_var = tk.StringVar();
         image_model_combo = ttk.Combobox(core_frame, textvariable=self.image_model_var, values=list(IMAGE_MODELS.keys()), state="readonly")
         image_model_combo.grid(row=0, column=3, padx=5, sticky="ew")
-
+        
         subtitle_frame = ttk.LabelFrame(left_col, text="4. Subtitles & Style", padding=10); subtitle_frame.pack(fill="x", pady=5)
         subtitle_frame.columnconfigure(1, weight=1); subtitle_frame.columnconfigure(3, weight=1)
         self.font_var, self.position_var, self.color_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
@@ -871,7 +973,7 @@ class VideoCreatorApp:
             self.toggle_script_button.grid(row=0, column=1, sticky='ne', padx=5, pady=5)
         else:
             self.toggle_script_button.grid_remove()
-
+            
     def toggle_script_view(self):
         if not self.audio_script_cache or not self.subtitle_script_cache:
             return
@@ -894,7 +996,7 @@ class VideoCreatorApp:
         
         if self.one_click_mode_var.get():
             self.script_text.config(state='disabled')
-
+    
     def toggle_one_click_mode(self):
         if self.one_click_mode_var.get():
             self.main_action_button.config(text="🚀 Generate & Upload", style="Accent.TButton")
@@ -918,8 +1020,6 @@ class VideoCreatorApp:
         if not self.last_video_path or not os.path.exists(self.last_video_path):
             messagebox.showerror("Error", "No valid video file found to upload.")
             return
-
-        # Use a separate thread to not freeze the GUI
         threading.Thread(target=self.upload_worker, daemon=True).start()
         
     def upload_worker(self):
@@ -930,6 +1030,7 @@ class VideoCreatorApp:
         if not self.youtube_service:
             messagebox.showerror("Authentication Failed", "Could not authenticate with YouTube. Check logs.")
             self.log_queue.put(('stage_update', (7, 'error')))
+            play_sound('section_notcomplete.mp3')
             return
 
         script_for_metadata = self.subtitle_script_cache if self.subtitle_script_cache else ""
@@ -941,28 +1042,28 @@ class VideoCreatorApp:
         else:
             initial_data = {'title': title, 'description': desc, 'tags': tags}
         
-        # We need to schedule the dialog on the main thread
         self.root.after(0, lambda: self.show_upload_dialog(initial_data))
 
     def show_upload_dialog(self, initial_data):
         dialog = YouTubeUploadDialog(self.root, "Upload to YouTube", initial_data)
         if dialog.result:
-            # After getting data, go back to a worker thread for the upload
             threading.Thread(target=self.perform_upload, args=(dialog.result,), daemon=True).start()
         else:
             self.log_queue.put(('log', "YouTube upload cancelled by user."))
             self.log_queue.put(('stage_update', (7, 'error')))
+            play_sound('section_notcomplete.mp3')
             
     def perform_upload(self, upload_data):
-        upload_to_youtube(
-            self.youtube_service,
-            self.last_video_path,
-            upload_data['title'],
-            upload_data['description'],
-            upload_data['tags'],
-            self.log_queue
+        video_id = upload_to_youtube(
+            self.youtube_service, self.last_video_path, upload_data['title'],
+            upload_data['description'], upload_data['tags'], self.log_queue
         )
-        self.log_queue.put(('stage_update', (7, 'complete')))
+        if video_id:
+            self.log_queue.put(('stage_update', (7, 'complete')))
+            play_sound('upload_complete.mp3')
+        else:
+            self.log_queue.put(('stage_update', (7, 'error')))
+            play_sound('section_notcomplete.mp3')
 
     def _load_settings(self):
         self.language_var.set(self.config.get('last_language', 'English'))
@@ -983,7 +1084,7 @@ class VideoCreatorApp:
         self.image_model_var.set(self.config.get('last_image_model', list(IMAGE_MODELS.keys())[0]))
         self.verbose_logging_var.set(self.config.get('verbose_logging', False))
         self.on_language_change()
-
+        
     def _save_settings(self):
         self.config['last_language'] = self.language_var.get(); self.config['last_voice_name'] = self.voice_var.get(); self.config['last_aspect_ratio'] = self.aspect_ratio_var.get(); self.config['intro_on'] = self.intro_enabled_var.get(); self.config['logo_path'] = self.logo_path_var.get(); self.config['logo_opacity'] = self.logo_opacity_var.get(); self.config['last_font'] = self.font_var.get(); self.config['last_position'] = self.position_var.get(); self.config['last_color'] = self.color_var.get(); self.config['last_border'] = self.border_var.get(); self.config['last_sub_size'] = self.size_var.get(); self.config['add_emojis'] = self.add_emojis_var.get(); self.config['bg_music_path'] = self.bg_music_path_var.get(); self.config['bg_music_vol'] = self.bg_music_vol_var.get()
         self.config['suggested_topic_history'] = self.config.get('suggested_topic_history', [])
@@ -1005,7 +1106,8 @@ class VideoCreatorApp:
     def process_queue(self):
         try:
             while True:
-                msg_type, data = self.log_queue.get_nowait()
+                msg = self.log_queue.get_nowait()
+                msg_type, data = msg
                 if msg_type == "log": self.log_text.config(state='normal'); self.log_text.insert(tk.END, data + '\n'); self.log_text.config(state='disabled'); self.log_text.see(tk.END)
                 elif msg_type == "set_topic": self.topic_var.set(data)
                 elif msg_type == "set_script": 
@@ -1058,19 +1160,13 @@ class VideoCreatorApp:
         self._toggle_ui_for_task(True); threading.Thread(target=self._fetch_similar_topic_worker, args=(base_topic,), daemon=True).start()
 
     def _toggle_ui_for_task(self, is_running, is_pausable=False):
-        """Central function to control UI state."""
         state = 'disabled' if is_running else 'normal'
         self.suggest_topic_button.config(state=state)
         self.suggest_similar_button.config(state=state)
         self.main_action_button.config(state=state)
         self.settings_button.config(state=state)
-        
-        if is_pausable:
-            self.pause_button.config(state='normal' if is_running else 'disabled')
-            self.cancel_button.config(state='normal' if is_running else 'disabled')
-        else:
-            self.pause_button.config(state='disabled')
-            self.cancel_button.config(state='disabled')
+        self.pause_button.config(state='normal' if is_pausable and is_running else 'disabled')
+        self.cancel_button.config(state='normal' if is_pausable and is_running else 'disabled')
 
     def _fetch_topic_worker(self):
         try:
@@ -1080,6 +1176,9 @@ class VideoCreatorApp:
                 self.log_queue.put(('set_topic', topic))
                 self.config['suggested_topic_history'].append(topic)
                 self._save_settings()
+                play_sound('section_complete.mp3')
+            else:
+                play_sound('section_notcomplete.mp3')
         finally: self.log_queue.put(("reset_for_script_gen", None))
 
     def _fetch_similar_topic_worker(self, base_topic):
@@ -1090,6 +1189,9 @@ class VideoCreatorApp:
                 self.log_queue.put(('set_topic', topic))
                 self.config['suggested_topic_history'].append(topic)
                 self._save_settings()
+                play_sound('section_complete.mp3')
+            else:
+                play_sound('section_notcomplete.mp3')
         finally: self.log_queue.put(("reset_for_script_gen", None))
 
     def toggle_pause(self):
@@ -1103,8 +1205,7 @@ class VideoCreatorApp:
         if messagebox.askyesno("Cancel? 🛑", "Are you sure you want to cancel the video creation?"): 
             self.log_queue.put(('log', "\n❌ Cancellation requested by user...")); 
             self.cancel_event.set();
-            if self.pause_event.is_set(): # If paused, unpause to allow cancellation to proceed
-                self.pause_event.clear()  
+            if self.pause_event.is_set(): self.pause_event.clear()
     
     def _check_for_pause_or_cancel(self):
         if self.cancel_event.is_set(): raise CancellationError("Video creation cancelled.")
@@ -1115,19 +1216,14 @@ class VideoCreatorApp:
     def _reset_ui_after_run(self, success=False, is_script_gen_only=False):
         self.start_time = None
         self._toggle_ui_for_task(is_running=False)
-        
         self.upload_button.config(state='normal' if success else 'disabled')
-
         if not is_script_gen_only:
-            self.script_text.config(state='disabled')
-            self.script_text.delete(1.0, tk.END)
+            self.script_text.config(state='disabled'); self.script_text.delete(1.0, tk.END)
             self.main_action_button.config(text="1. Generate Script", style="TButton")
-            self.audio_script_cache = None
-            self.subtitle_script_cache = None
+            self.audio_script_cache = None; self.subtitle_script_cache = None
             self.on_language_change()
             if self.one_click_mode_var.get():
                 self.main_action_button.config(text="🚀 Generate & Upload", style="Accent.TButton")
-
         self.pause_button.config(text="⏸️ Pause"); 
 
     def start_script_generation(self):
@@ -1141,172 +1237,134 @@ class VideoCreatorApp:
             add_emojis = self.add_emojis_var.get()
             gemini_keys = self.config.get('GEMINI_API_KEYS', [])
             audio_script, subtitle_script, _ = generate_script(gemini_keys, self.topic_var.get().strip(), self.language_var.get(), self.log_queue, add_emojis=add_emojis)
-            
             if audio_script:
-                self.audio_script_cache = audio_script
-                self.subtitle_script_cache = subtitle_script
+                self.audio_script_cache, self.subtitle_script_cache = audio_script, subtitle_script
                 self.script_box_mode = 'subtitle'
-                display_script = subtitle_script if subtitle_script else audio_script
-                self.log_queue.put(('set_script', display_script))
+                self.log_queue.put(('set_script', subtitle_script if subtitle_script else audio_script))
                 self.log_queue.put(('log', f"🎤 VOICEOVER SCRIPT (for non-English):\n---\n{self.audio_script_cache}\n---"))
                 self.log_queue.put(('stage_update', (0, 'complete')))
+                play_sound('section_complete.mp3')
                 self.on_language_change()
                 if self.topic_var.get() not in self.config['suggested_topic_history']:
-                    self.config['suggested_topic_history'].append(self.topic_var.get())
-                    self._save_settings()
+                    self.config['suggested_topic_history'].append(self.topic_var.get()); self._save_settings()
             else:
                 self.log_queue.put(('stage_update', (0, 'error')))
+                play_sound('section_notcomplete.mp3')
         finally:
             self.log_queue.put(("reset_for_script_gen", None))
     
     def start_video_creation(self):
         try:
-            if self.script_box_mode == 'subtitle':
-                self.subtitle_script_cache = self.script_text.get("1.0", tk.END).strip()
-            else: 
-                self.audio_script_cache = self.script_text.get("1.0", tk.END).strip()
-
-            audio_script = self.audio_script_cache
-            subtitle_script = self.subtitle_script_cache
-
-            if not audio_script or not subtitle_script:
-                messagebox.showerror("Error", "Could not find valid scripts. Please generate a script first.")
-                self._reset_ui_after_run(); return
-
+            if self.script_box_mode == 'subtitle': self.subtitle_script_cache = self.script_text.get("1.0", tk.END).strip()
+            else: self.audio_script_cache = self.script_text.get("1.0", tk.END).strip()
+            if not self.audio_script_cache or not self.subtitle_script_cache:
+                messagebox.showerror("Error", "Could not find valid scripts."); self._reset_ui_after_run(); return
             if not self.config.get('CLOUDFLARE_ACCOUNTS') or not self.config.get('ELEVENLABS_API_KEYS'):
-                messagebox.showerror("Missing API Key", "Please ensure Cloudflare and ElevenLabs keys are set.")
-                self._reset_ui_after_run(); return
-            
+                messagebox.showerror("Missing API Key", "Please ensure Cloudflare and ElevenLabs keys are set."); self._reset_ui_after_run(); return
             self._save_settings()
-            
             options = {
-                "audio_script": audio_script, "subtitle_script": subtitle_script,
+                "audio_script": self.audio_script_cache, "subtitle_script": self.subtitle_script_cache,
                 "topic": self.topic_var.get().strip(), "language": self.language_var.get(), "voice_id": VOICES.get(self.voice_var.get()), "aspect_ratio_key": self.aspect_ratio_var.get(), "subtitle_options": {'font': self.font_var.get(), 'position': SUBTITLE_POSITIONS[self.position_var.get()], 'color': self.color_var.get(), 'border': self.border_var.get(), 'size': self.size_var.get()}, "intro_on": self.intro_enabled_var.get(), "logo_path": self.logo_path_var.get(), "logo_opacity": self.logo_opacity_var.get(), "bg_music_path": self.bg_music_path_var.get(), "bg_music_vol": self.bg_music_vol_var.get(), "image_model_name": self.image_model_var.get(), "verbose_logging": self.verbose_logging_var.get()
             }
-
             self.cancel_event.clear(); self.pause_event.clear(); 
             self._toggle_ui_for_task(is_running=True, is_pausable=True)
             self.progress_stepper.reset(); self.start_time = time.time(); self.update_timer(); self.log_queue.put(('stage_update', (0, 'complete'))); 
             threading.Thread(target=self.video_creation_worker, args=(options, False), daemon=True).start()
-        
         except Exception as e:
-            self.log_queue.put(('log', f"❌ UNEXPECTED ERROR on start: {e}\n{traceback.format_exc()}"))
-            self._reset_ui_after_run()
+            self.log_queue.put(('log', f"❌ UNEXPECTED ERROR on start: {e}\n{traceback.format_exc()}")); self._reset_ui_after_run()
 
     def start_one_click_generation(self):
         if not all(self.config.get(key) for key in ['GEMINI_API_KEYS', 'ELEVENLABS_API_KEYS', 'CLOUDFLARE_ACCOUNTS']):
-            messagebox.showerror("API Keys Missing", "Please ensure all API keys (Gemini, ElevenLabs, Cloudflare) are set in the settings for One-Click mode.")
-            return
+            messagebox.showerror("API Keys Missing", "Please ensure all API keys are set for One-Click mode."); return
         if not os.path.exists(CLIENT_SECRET_FILE):
-             messagebox.showerror("YouTube Setup Missing", "client_secret.json not found. Please follow setup instructions for the YouTube upload feature.")
-             return
-        self._toggle_ui_for_task(is_running=True, is_pausable=True)
-        threading.Thread(target=self.one_click_worker, daemon=True).start()
+             messagebox.showerror("YouTube Setup Missing", "client_secret.json not found."); return
+        self._toggle_ui_for_task(is_running=True, is_pausable=True); threading.Thread(target=self.one_click_worker, daemon=True).start()
 
     def one_click_worker(self):
         try:
-            self.progress_stepper.reset()
-            self.cancel_event.clear(); self.pause_event.clear();
-            self.start_time = time.time(); self.update_timer()
-
+            self.progress_stepper.reset(); self.cancel_event.clear(); self.pause_event.clear(); self.start_time = time.time(); self.update_timer()
             gemini_keys = self.config.get('GEMINI_API_KEYS', [])
             topic, gemini_keys = get_trending_topic(gemini_keys, self.log_queue)
             if not topic: raise Exception("Failed to generate a topic.")
-            self.log_queue.put(('set_topic', topic))
-
+            self.log_queue.put(('set_topic', topic)); play_sound('section_complete.mp3')
             add_emojis = self.add_emojis_var.get()
             audio_script, subtitle_script, _ = generate_script(gemini_keys, topic, self.language_var.get(), self.log_queue, add_emojis=add_emojis)
             if not audio_script: raise Exception("Failed to generate script.")
-            self.log_queue.put(('set_script', subtitle_script))
-            # Cache scripts for potential manual upload later
-            self.audio_script_cache = audio_script
-            self.subtitle_script_cache = subtitle_script
-
+            self.log_queue.put(('set_script', subtitle_script)); self.audio_script_cache = audio_script; self.subtitle_script_cache = subtitle_script
             options = {
                 "audio_script": audio_script, "subtitle_script": subtitle_script,
                 "topic": topic, "language": self.language_var.get(), "voice_id": VOICES.get(self.voice_var.get()), "aspect_ratio_key": self.aspect_ratio_var.get(), "subtitle_options": {'font': self.font_var.get(), 'position': SUBTITLE_POSITIONS[self.position_var.get()], 'color': self.color_var.get(), 'border': self.border_var.get(), 'size': self.size_var.get()}, "intro_on": self.intro_enabled_var.get(), "logo_path": self.logo_path_var.get(), "logo_opacity": self.logo_opacity_var.get(), "bg_music_path": self.bg_music_path_var.get(), "bg_music_vol": self.bg_music_vol_var.get(), "image_model_name": self.image_model_var.get(), "verbose_logging": self.verbose_logging_var.get()
             }
-            
-            # This is the full pipeline, calling the main worker with one_click=True
             self.video_creation_worker(options, one_click=True)
-
         except Exception as e:
-            self.log_queue.put(('log', f"❌ A critical error occurred in One-Click mode: {e}\n{traceback.format_exc()}"))
+            self.log_queue.put(('log', f"❌ One-Click mode error: {e}\n{traceback.format_exc()}"))
             self.log_queue.put(("task_failed", None))
 
     def video_creation_worker(self, options, one_click=False):
         for directory in [OUTPUT_DIR, VOICEOVER_DIR, TEMP_DIR]: os.makedirs(directory, exist_ok=True)
         final_video_path = None; stage_idx = 1
         try:
-            audio_script = options['audio_script']
-            subtitle_script = options['subtitle_script']
-            
-            self.log_queue.put(('stage_update', (0, 'complete')))
-            
-            dimensions = SDXL_DIMENSIONS[options['aspect_ratio_key']]; options['target_size'] = (dimensions['width'], dimensions['height']); self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress'))); audio_file, _ = generate_voiceover(audio_script, self.config.get('ELEVENLABS_API_KEYS', []), options['voice_id'], options['topic'], self.log_queue);
+            self.log_queue.put(('stage_update', (0, 'complete'))) # Script is already done
+            dimensions = SDXL_DIMENSIONS[options['aspect_ratio_key']]; options['target_size'] = (dimensions['width'], dimensions['height']); self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+            audio_file, _ = generate_voiceover(options['audio_script'], self.config.get('ELEVENLABS_API_KEYS', []), options['voice_id'], options['topic'], self.log_queue)
             if not audio_file: raise Exception("Voiceover generation failed.")
             subtitle_data = generate_subtitles(audio_file, self.log_queue)
-            if subtitle_data: subtitle_data = align_script_with_subtitles(subtitle_script, subtitle_data, self.log_queue)
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
-            
-            script_for_visuals = subtitle_script 
-            gemini_keys = self.config.get('GEMINI_API_KEYS', [])
+            if subtitle_data: subtitle_data = align_script_with_subtitles(options['subtitle_script'], subtitle_data, self.log_queue)
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+            script_for_visuals = options['subtitle_script']
             if options['language'] not in ['English']:
-                   self.log_queue.put(('log', f"  -> ℹ️ Translating script to English for visual prompt generation..."))
-                   translation_prompt = f"Translate the following script into clear, descriptive English. Retain the core meaning and visual elements. Output only the translated English text:\n\n{subtitle_script}"
-                   translated_script, gemini_keys = call_gemini_text_api(gemini_keys, None, translation_prompt, self.log_queue)
-                   if translated_script:
-                       script_for_visuals = translated_script
-                       self.log_queue.put(('log', "  -> ✅ Translation successful."))
-                   else:
-                       self.log_queue.put(('log', "  -> ⚠️ Translation failed. Using original script for visuals."))
-            
-            visual_prompts, _ = generate_visual_prompts(gemini_keys, script_for_visuals, self.log_queue, self._check_for_pause_or_cancel, verbose=options['verbose_logging'])
+                translation_prompt = f"Translate into clear English: {options['subtitle_script']}"; translated_script, _ = call_gemini_text_api(self.config.get('GEMINI_API_KEYS', []), None, translation_prompt, self.log_queue)
+                if translated_script: script_for_visuals = translated_script
+            visual_prompts, _ = generate_visual_prompts(self.config.get('GEMINI_API_KEYS', []), script_for_visuals, self.log_queue, self._check_for_pause_or_cancel, verbose=options['verbose_logging'])
             if not visual_prompts: raise Exception("Visual prompt generation failed.")
-            
-            image_model_id = IMAGE_MODELS[options['image_model_name']]
-            image_files = generate_images_cloudflare(visual_prompts, self.config.get('CLOUDFLARE_ACCOUNTS', []), self.log_queue, image_model_id, self._check_for_pause_or_cancel)
+            image_files = generate_images_cloudflare(visual_prompts, self.config.get('CLOUDFLARE_ACCOUNTS', []), self.log_queue, IMAGE_MODELS[options['image_model_name']], self._check_for_pause_or_cancel)
             if not image_files: raise Exception("Image generation failed.")
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1
-            
-            if one_click:
-                self.final_image_paths = image_files
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1
+            if one_click: self.final_image_paths = image_files
             else:
                 self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress'))); self.log_queue.put(('show_image_review', image_files)); self.image_review_event.clear(); self.image_review_event.wait()
                 if self.cancel_event.is_set(): raise CancellationError("Cancelled during review.")
                 image_files = self.final_image_paths; self.log_queue.put(('log', "✅ Image review complete. Resuming..."))
-
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress'))); intro_path = create_intro_video({**options, 'image_paths': image_files}, self.log_queue, self._check_for_pause_or_cancel) if options['intro_on'] else None
-            if options['intro_on'] and not intro_path: self.log_queue.put(('log', "  -> ⚠️ WARNING: Intro video failed but continuing..."))
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress'))); video_duration = AudioFileClip(audio_file).duration if audio_file else len(image_files) * 4; main_video_path = create_main_video({**options, 'image_paths': image_files, 'voiceover_path': audio_file, 'subtitle_data': subtitle_data, 'duration': video_duration}, self.log_queue, self._check_for_pause_or_cancel)
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+            intro_path = create_intro_video({**options, 'image_paths': image_files}, self.log_queue, self._check_for_pause_or_cancel) if options['intro_on'] else None
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+            video_duration = AudioFileClip(audio_file).duration; main_video_path = create_main_video({**options, 'image_paths': image_files, 'voiceover_path': audio_file, 'subtitle_data': subtitle_data, 'duration': video_duration}, self.log_queue, self._check_for_pause_or_cancel)
             if not main_video_path: raise Exception("Main video assembly failed.")
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress'))); sanitized_topic = sanitize_filename(options['topic']); filename = f"{sanitized_topic.replace(' ', '_')[:50] or 'video'}_{int(time.time())}.mp4"; output_path = os.path.join(OUTPUT_DIR, filename); final_video_path = merge_videos(intro_path, main_video_path, output_path, {**options, 'intro_path': intro_path}, self.log_queue, self._check_for_pause_or_cancel)
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1; self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+            filename = f"{sanitize_filename(options['topic'])[:50] or 'video'}_{int(time.time())}.mp4"; output_path = os.path.join(OUTPUT_DIR, filename); final_video_path = merge_videos(intro_path, main_video_path, output_path, {**options, 'intro_path': intro_path}, self.log_queue, self._check_for_pause_or_cancel)
             if not final_video_path: raise Exception("Final video merge failed.")
-            
-            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); stage_idx += 1
-
+            self.last_video_path = final_video_path
+            self.log_queue.put(('stage_update', (stage_idx, 'complete'))); play_sound('section_complete.mp3'); stage_idx += 1
             if one_click:
-                self._check_for_pause_or_cancel(); self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
-                title, desc, tags, _ = generate_youtube_metadata(self.config.get('GEMINI_API_KEYS', []), subtitle_script, self.log_queue)
+                self._check_for_pause_or_cancel()
+                self.log_queue.put(('stage_update', (stage_idx, 'in_progress')))
+                title, desc, tags, _ = generate_youtube_metadata(self.config.get('GEMINI_API_KEYS', []), options['subtitle_script'], self.log_queue)
                 if title:
                     yt_service = youtube_authenticate(self.log_queue)
                     if yt_service:
-                        upload_to_youtube(yt_service, final_video_path, title, desc, tags, self.log_queue)
+                        video_id = upload_to_youtube(yt_service, final_video_path, title, desc, tags, self.log_queue)
+                        if video_id:
+                            self.log_queue.put(('stage_update', (stage_idx, 'complete')))
+                            play_sound('upload_complete.mp3')
+                        else:
+                            self.log_queue.put(('stage_update', (stage_idx, 'error')))
+                            play_sound('section_notcomplete.mp3')
                     else:
                         self.log_queue.put(('log', "  -> ⚠️ WARNING: YouTube authentication failed. Skipping upload."))
-                self.log_queue.put(('stage_update', (stage_idx, 'complete')))
+                        self.log_queue.put(('stage_update', (stage_idx, 'error')))
+                        play_sound('section_notcomplete.mp3')
+                else:
+                    self.log_queue.put(('log', "  -> ⚠️ WARNING: Metadata generation failed. Skipping upload."))
+                    self.log_queue.put(('stage_update', (stage_idx, 'error')))
+                    play_sound('section_notcomplete.mp3')
                 messagebox.showinfo("One-Click Complete", f"Fully autonomous process finished!\n\nFinal video saved to:\n{final_video_path}")
-
-            if final_video_path: self.log_queue.put(("task_successful", final_video_path))
-
+            
+            if final_video_path and not one_click: self.log_queue.put(("task_successful", final_video_path))
+            
         except CancellationError: 
-            self.log_queue.put(('log', "\n🛑 Process was cancelled by the user.")); 
-            self.log_queue.put(('stage_update', (stage_idx, 'error')))
-            self.log_queue.put(("task_failed", None)) # Explicitly send fail message
+            self.log_queue.put(('log', "\n🛑 Process was cancelled.")); play_sound('section_notcomplete.mp3'); self.log_queue.put(('stage_update', (stage_idx, 'error'))); self.log_queue.put(("task_failed", None))
         except Exception as e: 
-            self.log_queue.put(('log', f"❌ A critical error occurred: {e}\n{traceback.format_exc()}")); 
-            self.log_queue.put(('stage_update', (stage_idx, 'error')))
-            self.log_queue.put(("task_failed", None)) # Explicitly send fail message
+            self.log_queue.put(('log', f"❌ Error: {e}\n{traceback.format_exc()}")); play_sound('section_notcomplete.mp3'); self.log_queue.put(('stage_update', (stage_idx, 'error'))); self.log_queue.put(("task_failed", None))
 
 def check_ffmpeg():
     try: subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); return True
@@ -1316,11 +1374,8 @@ if __name__ == '__main__':
     if not check_ffmpeg():
         root = tk.Tk(); root.withdraw(); messagebox.showerror("FFmpeg Not Found", "FFmpeg is required. Please download from ffmpeg.org and add its 'bin' directory to your system's PATH."); root.destroy()
     else:
-        # Compatibility fix for Pillow versions
-        if hasattr(PIL.Image, 'Resampling'):
-            if not hasattr(PIL.Image, 'ANTIALIAS'): 
-                PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
-                
+        if hasattr(PIL.Image, 'Resampling') and not hasattr(PIL.Image, 'ANTIALIAS'): 
+            PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
         root = tk.Tk(); app = VideoCreatorApp(root)
         if not os.path.exists(CONFIG_FILE): app.open_settings()
         root.mainloop()
